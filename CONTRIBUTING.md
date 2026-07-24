@@ -54,12 +54,16 @@ Please use the bug-report issue template and include:
 
 ## Releasing (maintainers)
 
-1. Bump version in `package.json` (semver).
-2. Update `CHANGELOG.md` — move `Unreleased` items under a new dated heading.
-3. Commit: `git commit -am "release: vX.Y.Z"`
-4. Tag & push: `git tag vX.Y.Z && git push --follow-tags`
-5. Create the GitHub release with notes copied from the changelog.
-6. The `release.yml` workflow auto-publishes to npm (requires `NPM_TOKEN` repo secret).
+Releases are fully automated using `semantic-release` on every push/merge to the `main` branch. 
+
+1. Ensure your commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+2. When a PR is merged to `main`, the `Publish to npm` workflow (`release.yml`) will:
+   - Analyze your commit messages to determine the next version bump (major/minor/patch).
+   - Generate release notes and prepend them to `CHANGELOG.md`.
+   - Bump the version in `package.json` and `package-lock.json`.
+   - Push the updated files back to the repository.
+   - Create a corresponding git tag and GitHub Release.
+   - Publish the package to npm using OIDC Trusted Publishing (no secrets required!).
 
 ## Code of conduct
 

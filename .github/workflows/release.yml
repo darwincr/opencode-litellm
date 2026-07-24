@@ -2,30 +2,29 @@ name: Publish to npm
 
 on:
   push:
-    tags: ['v*']
-  release:
-    types: [published]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # needed to create the GitHub Release
-      id-token: write # for npm provenance
+      contents: write # needed to create the GitHub Release and push commits/tags
+      id-token: write # for npm provenance and Trusted Publishing OIDC
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so release notes can diff against prior tag
+          fetch-depth: 0 # full history is required for semantic-release to analyze commits
 
       # Trusted Publishing (OIDC) requires npm >= 11.5.1. Node 24 ships
-      # with npm 11 by default, avoiding a flaky in-place npm self-upgrade
-      # across majors (which fails with MODULE_NOT_FOUND on the hosted runner).
+      # with npm 11 by default. We do NOT specify "registry-url" because
+      # doing so conflicts with npm's default OIDC authentication mechanism.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           cache: npm
 
       - name: Install dependencies
@@ -34,22 +33,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Uses npm Trusted Publishing (OIDC) — no NPM_TOKEN secret required.
-      # The trusted publisher must be configured on npmjs.com:
-      #   https://www.npmjs.com/package/opencode-plugin-litellm/access
-      # with org=yuseferi, repo=opencode-litellm, workflow=release.yml.
-      - name: Publish to npm
-        run: npm publish --access public --provenance
-
-      # Only create a GitHub Release when this run was triggered by a tag
-      # push. When the trigger is `release: published`, the Release already
-      # exists and this step would 422.
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
+      # Runs semantic-release. Omitting NPM_TOKEN triggers the @semantic-release/npm
+      # plugin to use OIDC Trusted Publishing.
+      - name: Run semantic-release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

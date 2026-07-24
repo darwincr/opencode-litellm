@@ -2,18 +2,28 @@ import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import {
   autoDetectLiteLLM,
   checkLiteLLMHealth,
+  discoverLiteLLMModelInfo,
   discoverLiteLLMModels,
   normalizeBaseURL,
 } from '../utils/litellm-api'
 import {
   formatModelName,
-  extractModelOwner,
   categorizeModel,
 } from '../utils/format-model-name'
-import type { LiteLLMModel } from '../types'
+import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 
 const CHAT_PROVIDER_ID = 'litellm'
-const DISCOVERY_TIMEOUT_MS = 5000
+// Covers the sequential 3 s health check plus the parallel 15 s
+// models/model-info fetch phase, with headroom.
+const DISCOVERY_TIMEOUT_MS = 20000
+
+/**
+ * OpenCode invokes the `config` hook several times per run with a
+ * cumulative config object. Track which model ids we already injected
+ * per baseURL so repeat invocations can return early instead of
+ * re-querying the proxy.
+ */
+const injectedModelIds = new Map<string, Set<string>>()
 
 /**
  * Read `customHeaders` from a provider options block.
@@ -33,12 +43,38 @@ function readCustomHeaders(
 }
 
 /**
+ * Overlay metadata from `/v1/model/info` onto a `/v1/models` entry.
+ * Fields already present on the lean entry win; the info block only
+ * fills gaps (notably `mode`, which `/v1/models` omits for
+ * database-defined models).
+ */
+function enrichModel(model: LiteLLMModel, info: LiteLLMModelInfo): LiteLLMModel {
+  return {
+    ...model,
+    mode: model.mode ?? info.mode,
+    max_tokens: model.max_tokens ?? info.max_tokens,
+    max_input_tokens: model.max_input_tokens ?? info.max_input_tokens,
+    max_output_tokens: model.max_output_tokens ?? info.max_output_tokens,
+    supports_function_calling: model.supports_function_calling ?? info.supports_function_calling,
+    supports_vision: model.supports_vision ?? info.supports_vision,
+    supports_reasoning: model.supports_reasoning ?? info.supports_reasoning,
+    supports_pdf_input: model.supports_pdf_input ?? info.supports_pdf_input,
+    supports_audio_input: model.supports_audio_input ?? info.supports_audio_input,
+  }
+}
+
+/**
  * Convert a discovered LiteLLM model into an OpenCode config-level
  * model entry (the shape used in `provider.*.models` inside
- * `opencode.json`).
+ * `opencode.json`). Returns `null` for non-chat models (embedding,
+ * image, audio) — they can't be used as primary chat models and would
+ * clutter the picker.
  */
-function toConfigModel(model: LiteLLMModel): Record<string, unknown> {
+function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
   const type = categorizeModel(model)
+  if (type === 'embedding' || type === 'image' || type === 'audio') {
+    return null
+  }
   const entry: Record<string, unknown> = {
     name: formatModelName(model),
   }
@@ -51,13 +87,18 @@ function toConfigModel(model: LiteLLMModel): Record<string, unknown> {
   if (model.supports_function_calling) {
     entry.tool_call = true
   }
+  if (model.supports_reasoning) {
+    entry.reasoning = true
+  }
   if (model.supports_vision) {
     entry.attachment = true
   }
-  if (type === 'embedding' || type === 'image' || type === 'audio') {
-    // skip non-chat models from the config — they can't be used as
-    // primary chat models and would clutter the picker.
-    return entry
+  const input: Array<'text' | 'image' | 'pdf' | 'audio'> = ['text']
+  if (model.supports_vision) input.push('image')
+  if (model.supports_pdf_input) input.push('pdf')
+  if (model.supports_audio_input) input.push('audio')
+  if (input.length > 1) {
+    entry.modalities = { input, output: ['text'] }
   }
   return entry
 }
@@ -158,6 +199,14 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
 
       // Discover models with timeout
       const work = async () => {
+        const alreadyInjected = injectedModelIds.get(baseURL!)
+        if (
+          alreadyInjected &&
+          [...alreadyInjected].every((id) => models[id])
+        ) {
+          return
+        }
+
         if (!(await checkLiteLLMHealth(baseURL!, apiKey, customHeaders))) {
           console.warn(
             `[opencode-litellm] LiteLLM appears offline or unauthorized at ${baseURL}`,
@@ -165,19 +214,34 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           return
         }
 
-        let discovered: LiteLLMModel[]
-        try {
-          discovered = await discoverLiteLLMModels(
-            baseURL!,
-            apiKey,
-            customHeaders,
-          )
-        } catch (error) {
+        // `/v1/models` omits `mode` and capability metadata for
+        // database-defined models, so fetch `/v1/model/info` alongside
+        // it. The info call is best-effort: without it, classification
+        // falls back to id heuristics.
+        const [modelsResult, infoResult] = await Promise.allSettled([
+          discoverLiteLLMModels(baseURL!, apiKey, customHeaders),
+          discoverLiteLLMModelInfo(baseURL!, apiKey, customHeaders),
+        ])
+
+        if (modelsResult.status === 'rejected') {
+          const error = modelsResult.reason
           console.warn(
             '[opencode-litellm] Model discovery failed:',
             error instanceof Error ? error.message : String(error),
           )
           return
+        }
+
+        const discovered = modelsResult.value
+        let infoByName: Map<string, LiteLLMModelInfo> | null = null
+        if (infoResult.status === 'fulfilled') {
+          infoByName = infoResult.value
+        } else {
+          const reason = infoResult.reason
+          console.warn(
+            '[opencode-litellm] /v1/model/info unavailable; non-chat model filtering will use id heuristics only:',
+            reason instanceof Error ? reason.message : String(reason),
+          )
         }
 
         if (discovered.length === 0) {
@@ -187,10 +251,36 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           return
         }
 
+        let added = 0
+        let skipped = 0
+        let wildcards = 0
+        const unmatched: string[] = []
         for (const model of discovered) {
+          // Wildcard entries (`deepseek/*`) are access rules, not
+          // callable models — invoking one sends a literal `*` upstream.
+          if (model.id.includes('*')) {
+            wildcards++
+            continue
+          }
           // Don't overwrite user-curated entries
           if (models[model.id]) continue
-          models[model.id] = toConfigModel(model)
+          const info = infoByName?.get(model.id)
+          if (infoByName && !info) unmatched.push(model.id)
+          const entry = toConfigModel(info ? enrichModel(model, info) : model)
+          if (!entry) {
+            skipped++
+            continue
+          }
+          models[model.id] = entry
+          added++
+        }
+
+        if (unmatched.length > 0) {
+          console.warn(
+            `[opencode-litellm] /v1/model/info has no entry for ${unmatched.length} model(s); ` +
+              `classification uses id heuristics for: ${unmatched.slice(0, 5).join(', ')}` +
+              (unmatched.length > 5 ? `, +${unmatched.length - 5} more` : ''),
+          )
         }
 
         // Remove the seed placeholder if real models were discovered
@@ -198,8 +288,14 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           delete models['_']
         }
 
+        injectedModelIds.set(baseURL!, new Set(Object.keys(models)))
+
         console.log(
-          `[opencode-litellm] Discovered ${discovered.length} models from ${baseURL}`,
+          `[opencode-litellm] Discovered ${discovered.length} models from ${baseURL} ` +
+            `(${added} added` +
+            (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
+            (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +
+            ')',
         )
       }
 

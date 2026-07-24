@@ -73,12 +73,12 @@ opencode
 | 🔍 **Auto-detection** | Probes `localhost:4000`, `:8000`, `:8080` and adopts the first responsive proxy. |
 | 📡 **Dynamic discovery** | Queries `/v1/models` so your OpenCode model picker always reflects your live `model_list`. |
 | 🏷️ **Smart formatting** | Turns `anthropic/claude-3-5-sonnet` into `Claude 3 5 Sonnet` in the picker — handles versions, sizes, quantizations, and brand-cased names like `gpt-4o`. |
-| 🧠 **Modality-aware** | Infers `chat` / `embedding` / `image` / `audio` from the model `mode` field or id, and writes proper `modalities` metadata. |
+| 🧠 **Modality-aware** | Enriches `/v1/models` entries with `/v1/model/info` (`mode`, token limits, capability flags) and hides embedding / image / audio models from the picker. |
 | 🧪 **Reasoning-aware routing** | Auto-routes `gpt-5*` / `o1`/`o3`/`o4*` models through a sibling `litellm-responses` provider that uses `/v1/responses`, so tools + `reasoning_effort` actually work. Override per model via `responsesApiModels` / `chatApiModels`. |
 | 🏢 **Provider extraction** | Pulls `litellm_provider` (or the `provider/model` prefix) into `organizationOwner` so models group correctly in the UI. |
 | 🔐 **Auth-aware** | Honours `LITELLM_API_KEY` / `LITELLM_MASTER_KEY` env vars or `provider.litellm.options.apiKey`. |
 | 🌐 **Gateway-friendly** | Supports `customHeaders` for proxies behind Cloudflare Access or other API gateways requiring extra HTTP headers. |
-| ⏱️ **Non-blocking startup** | Discovery is capped at **5 s** — a slow or offline proxy never delays OpenCode boot. |
+| ⏱️ **Non-blocking startup** | Health checks fail fast (3 s); discovery fetches are capped at **15 s** for slow remote proxies. Repeat config-hook invocations are a no-op. |
 | 🤝 **Non-destructive merge** | Only adds models you don't already have configured. Hand-curated entries are preserved verbatim. |
 | 🪶 **Zero runtime deps** | Only depends on `@opencode-ai/plugin`. No build step, no bundler. |
 | 🔒 **TypeScript strict** | Strict-mode compiled, fully typed public API. |
@@ -251,21 +251,23 @@ sequenceDiagram
         Plugin->>Plugin: auto-create provider entry
     end
     Plugin->>LL: GET /v1/models (with auth if set)
-    LL-->>Plugin: { data: [...models] }
+    Plugin->>LL: GET /v1/model/info (best-effort, for `mode` + limits)
+    LL-->>Plugin: { data: [...models] } + per-model info
+    Plugin->>Plugin: enrich models, hide non-chat (embedding/image/audio)
     Plugin->>Plugin: format names, infer modalities, extract owner
     Plugin->>Plugin: bucket each model by transport (chat vs responses)
     Plugin->>OC: merge chat-completions models into provider.litellm
     Plugin->>OC: merge responses models into provider.litellm-responses (lazy)
-    OC->>OC: render model picker with all discovered models
+    OC->>OC: render model picker with all eligible discovered chat models
 ```
 
 1. On OpenCode startup the `config` lifecycle hook fires.
 2. If `provider.litellm` exists, its `baseURL` is used. Otherwise common ports are probed.
 3. A health check (`GET /v1/models`) verifies the proxy is reachable and authorized.
-4. Models from the response are converted into OpenCode model entries with `id`, formatted `name`, `organizationOwner`, and inferred `modalities`.
+4. Models from the response are enriched with `/v1/model/info` metadata (`mode`, token limits, capability flags — `/v1/models` omits these for database-defined models) and converted into OpenCode model entries keyed by `id`, with formatted `name`, `organizationOwner`, and inferred `modalities`. Non-chat models (embedding / image / audio) are excluded from the picker.
 5. Each model is bucketed by transport — reasoning-tier models (`gpt-5*`, `o1`/`o3`/`o4*`, or anything with `mode === 'responses'`) go into the `litellm-responses` provider; everything else goes into `litellm`. Per-model overrides via `responsesApiModels` / `chatApiModels` win.
 6. Discovered models are merged on top of any user-defined ones — never overwriting them. A model is skipped if its key already exists under **either** provider.
-7. The whole flow is wrapped in a `Promise.race` against a 5 s timeout so a slow proxy never blocks boot.
+7. The whole flow is wrapped in a `Promise.race` against a 20 s timeout so a slow proxy never blocks boot.
 
 ## 📋 Requirements
 
@@ -391,12 +393,12 @@ src/
 ├── index.ts                    # Public exports
 ├── types/index.ts              # LiteLLM API types
 ├── utils/
-│   ├── litellm-api.ts          # health check, discovery, auto-detect
+│   ├── litellm-api.ts          # health check, discovery (/v1/models + /v1/model/info), auto-detect
 │   └── format-model-name.ts    # owner extraction, name formatting, categorization
 └── plugin/
-    ├── index.ts                # LiteLLMPlugin entry
-    ├── config-hook.ts          # OpenCode config-lifecycle hook (5 s timeout)
-    └── enhance-config.ts       # core merge logic
+    ├── index.ts                # LiteLLMPlugin entry (config hook, enrichment, filtering)
+    ├── discover.ts             # V2 Model bucketing (unused by the config hook)
+    └── build-model.ts          # V2 Model entry builder
 ```
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full contributor workflow.

@@ -33,7 +33,7 @@ export function buildModelV2(
     name: formatModelName(model),
     capabilities: {
       temperature: true,
-      reasoning: false,
+      reasoning: !!model.supports_reasoning,
       attachment: isVision || isAudio,
       toolcall: !!model.supports_function_calling,
       input: {
@@ -41,7 +41,7 @@ export function buildModelV2(
         audio: isAudio,
         image: isVision,
         video: false,
-        pdf: false,
+        pdf: !!model.supports_pdf_input,
       },
       output: {
         text: !isImageOut,

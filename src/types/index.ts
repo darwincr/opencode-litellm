@@ -15,9 +15,9 @@ export interface LiteLLMModel {
    */
   litellm_provider?: string
   /**
-   * Optional capability metadata exposed by some LiteLLM versions
-   * via `/model/info` (we ignore it for the lean discovery endpoint
-   * but keep the type around for forward-compat).
+   * Optional capability metadata. Present on `/v1/models` only for some
+   * deployments; reliably available via `/v1/model/info` and merged onto
+   * the discovered entry by the plugin.
    *
    * Newer LiteLLM versions may expose `'responses'` here for models
    * that must be routed through the OpenAI Responses API rather than
@@ -29,11 +29,46 @@ export interface LiteLLMModel {
   max_output_tokens?: number
   supports_function_calling?: boolean
   supports_vision?: boolean
+  supports_reasoning?: boolean
+  supports_pdf_input?: boolean
+  supports_audio_input?: boolean
 }
 
 export interface LiteLLMModelsResponse {
   object: string
   data: LiteLLMModel[]
+}
+
+/**
+ * The `model_info` block of a `/v1/model/info` entry. This endpoint
+ * reliably carries `mode` (and token limits) even for database-defined
+ * models, where `/v1/models` only returns the lean OpenAI schema.
+ */
+export interface LiteLLMModelInfo {
+  id?: string
+  db_model?: boolean
+  /** Alias LiteLLM assigns to the model; mirrors the `/v1/models` id. */
+  key?: string
+  mode?: string
+  max_tokens?: number
+  max_input_tokens?: number
+  max_output_tokens?: number
+  supports_function_calling?: boolean
+  supports_vision?: boolean
+  supports_reasoning?: boolean
+  supports_pdf_input?: boolean
+  supports_audio_input?: boolean
+}
+
+/** A single entry returned by LiteLLM's `/v1/model/info` endpoint. */
+export interface LiteLLMModelInfoEntry {
+  model_name: string
+  litellm_params?: Record<string, unknown>
+  model_info?: LiteLLMModelInfo
+}
+
+export interface LiteLLMModelInfoResponse {
+  data?: LiteLLMModelInfoEntry[]
 }
 
 export type ModelType = 'chat' | 'embedding' | 'image' | 'audio' | 'unknown'

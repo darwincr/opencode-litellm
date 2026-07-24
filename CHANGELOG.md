@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Embedding / image / audio models no longer appear in the OpenCode
+  model picker.** The non-chat filter in `toConfigModel()` was a dead
+  code path that returned the model entry either way, so models like
+  `mistral/mistral-embed` showed up as selectable chat models.
+- **Model classification now works for database-defined models.**
+  `/v1/models` omits the `mode` field for DB-defined models, so
+  mode-based classification never fired. The plugin now fetches
+  `/v1/model/info` alongside `/v1/models` and enriches each discovered
+  model with its `mode`, token limits (`max_input_tokens` /
+  `max_output_tokens`), and capability flags
+  (`supports_function_calling`, `supports_vision`). Fields already
+  present on the `/v1/models` entry take precedence. The info call is
+  best-effort — if the endpoint is unavailable, classification falls
+  back to the previous id heuristics.
+- The startup log now reports totals, additions, and hidden non-chat
+  models, e.g. `Discovered 12 models from http://localhost:4000 (10
+  added, 2 non-chat hidden)`.
+- **A warning is logged when `/v1/model/info` is unreachable**, so
+  degraded (id-heuristic-only) classification is no longer silent.
+- **The config hook is now idempotent within a process.** OpenCode
+  invokes the hook several times per run with a cumulative config;
+  repeat invocations used to re-query the proxy each time. Already-
+  injected model sets are now skipped entirely.
+- **Enrichment works when the `/v1/model/info` alias differs from the
+  `/v1/models` id.** Info entries are now indexed by `model_name`,
+  `model_info.key`, and `litellm_params.model`, so deployments whose
+  public alias differs from the upstream model string still get `mode`,
+  limits, and capability flags.
+- **`supports_vision` set on `litellm_params`** (instead of inside
+  `model_info`) is now honoured.
+- **Wildcard model entries (e.g. `deepseek/*`) are hidden from the
+  picker.** They are access rules, not callable models — selecting one
+  would send a literal `*` as the model name upstream.
+- **Discovery fetch timeout raised from 3 s to 15 s** (health checks
+  stay at 3 s fail-fast). Remote proxies with many database-defined
+  models generate large `/v1/model/info` payloads that could exceed the
+  old budget, silently degrading enrichment to id heuristics. The
+  overall discovery cap is now 15 s.
+- **Reasoning and modality capabilities are now propagated to
+  OpenCode.** `supports_reasoning` maps to the model's `reasoning`
+  flag, and `modalities.input` is emitted from `supports_vision`
+  (`image`), `supports_pdf_input` (`pdf`), and `supports_audio_input`
+  (`audio`). Previously models like `moonshot/kimi-k3` showed as
+  text-only, non-reasoning in the picker despite LiteLLM reporting the
+  capabilities.
+
 ## [0.5.0] — 2026-05-11
 
 ### Changed (BREAKING)

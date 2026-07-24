@@ -1,3 +1,15 @@
+# [0.6.0](https://github.com/yuseferi/opencode-litellm/compare/v0.5.0...v0.6.0) (2026-07-24)
+
+
+### Bug Fixes
+
+* **litellm:** enrich model discovery with info ([#10](https://github.com/yuseferi/opencode-litellm/issues/10)) ([2aa3873](https://github.com/yuseferi/opencode-litellm/commit/2aa3873aa6026c9e57650f0c7fd96d863dc9b8af))
+
+
+### Features
+
+* **release:** set up automated semantic-release via OIDC ([45119ce](https://github.com/yuseferi/opencode-litellm/commit/45119ce7ce6e26ffe787cdcda501160be66aee3a))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

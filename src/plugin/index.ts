@@ -26,6 +26,23 @@ const DISCOVERY_TIMEOUT_MS = 20000
 const injectedModelIds = new Map<string, Set<string>>()
 
 /**
+ * Helper to determine if a provider ID or its configured options indicate
+ * compatibility with LiteLLM.
+ */
+function isLiteLLMProvider(
+  providerId: string,
+  options: Record<string, unknown>,
+): boolean {
+  if (providerId === CHAT_PROVIDER_ID) return true
+  if (providerId.startsWith('litellm-') || providerId.startsWith('litellm_')) return true
+  if (options.litellm === true) return true
+  if (options.litellmCompatible === true) return true
+  if (options['litellm-compatible'] === true) return true
+  if (options.litellm_compatible === true) return true
+  return false
+}
+
+/**
  * Read `customHeaders` from a provider options block.
  */
 function readCustomHeaders(
@@ -133,178 +150,199 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
       // Ensure the provider entry exists
       if (!config.provider) config.provider = {}
 
-      const existing = config.provider[CHAT_PROVIDER_ID] as
-        | Record<string, unknown>
-        | undefined
-      const options = (existing?.options ?? {}) as Record<string, unknown>
-      const configuredBase =
-        typeof options.baseURL === 'string' ? options.baseURL : undefined
-      const configuredKey =
-        typeof options.apiKey === 'string' && options.apiKey
-          ? options.apiKey
-          : undefined
-      const envKey =
-        process.env.LITELLM_API_KEY ?? process.env.LITELLM_MASTER_KEY
-      const apiKey = configuredKey ?? envKey
-      const customHeaders = readCustomHeaders(options)
+      // Find all matching LiteLLM providers
+      const providerIds = Object.keys(config.provider)
+      const liteLLMProviders: Array<{ id: string; provider: Record<string, unknown> }> = []
 
-      // Resolve base URL
-      let baseURL: string | null = null
-      if (configuredBase) {
-        baseURL = normalizeBaseURL(configuredBase)
-      } else {
-        baseURL = await autoDetectLiteLLM(apiKey, customHeaders)
-      }
-
-      if (!baseURL) {
-        console.warn(
-          '[opencode-litellm] No LiteLLM proxy found. Configure provider.litellm.options.baseURL or start LiteLLM on port 4000/8000/8080.',
-        )
-        return
-      }
-
-      // Create provider entry if it doesn't exist
-      if (!existing) {
-        config.provider[CHAT_PROVIDER_ID] = {
-          npm: '@ai-sdk/openai-compatible',
-          name: 'LiteLLM (proxy)',
-          options: {
-            baseURL: `${baseURL}/v1`,
-          },
-          models: {},
+      for (const id of providerIds) {
+        const provider = config.provider[id]
+        if (provider && typeof provider === 'object') {
+          const options = (provider.options ?? {}) as Record<string, unknown>
+          if (isLiteLLMProvider(id, options)) {
+            liteLLMProviders.push({ id, provider })
+          }
         }
       }
 
-      const provider = config.provider[CHAT_PROVIDER_ID] as Record<
-        string,
-        unknown
-      >
-
-      // Ensure npm is set
-      if (!provider.npm) {
-        provider.npm = '@ai-sdk/openai-compatible'
+      // If no providers are matched (e.g., zero-config auto-detection),
+      // fall back to default 'litellm' provider to ensure backwards compatibility.
+      if (liteLLMProviders.length === 0) {
+        const id = CHAT_PROVIDER_ID
+        let provider = config.provider[id] as Record<string, unknown> | undefined
+        if (!provider) {
+          provider = {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'LiteLLM (proxy)',
+            options: {},
+            models: {},
+          }
+        }
+        liteLLMProviders.push({ id, provider })
       }
 
-      // Ensure options.baseURL is set
-      if (!provider.options) {
-        provider.options = { baseURL: `${baseURL}/v1` }
-      }
+      // Process each matched provider
+      for (const { id: providerId, provider } of liteLLMProviders) {
+        const options = (provider.options ?? {}) as Record<string, unknown>
+        const configuredBase =
+          typeof options.baseURL === 'string' ? options.baseURL : undefined
+        const configuredKey =
+          typeof options.apiKey === 'string' && options.apiKey
+            ? options.apiKey
+            : undefined
+        const envKey =
+          process.env.LITELLM_API_KEY ?? process.env.LITELLM_MASTER_KEY
+        const apiKey = configuredKey ?? envKey
+        const customHeaders = readCustomHeaders(options)
 
-      // Ensure models map exists
-      if (!provider.models) {
-        provider.models = {}
-      }
-
-      const models = provider.models as Record<string, unknown>
-
-      // Discover models with timeout
-      const work = async () => {
-        const alreadyInjected = injectedModelIds.get(baseURL!)
-        if (
-          alreadyInjected &&
-          [...alreadyInjected].every((id) => models[id])
-        ) {
-          return
-        }
-
-        if (!(await checkLiteLLMHealth(baseURL!, apiKey, customHeaders))) {
-          console.warn(
-            `[opencode-litellm] LiteLLM appears offline or unauthorized at ${baseURL}`,
-          )
-          return
-        }
-
-        // `/v1/models` omits `mode` and capability metadata for
-        // database-defined models, so fetch `/v1/model/info` alongside
-        // it. The info call is best-effort: without it, classification
-        // falls back to id heuristics.
-        const [modelsResult, infoResult] = await Promise.allSettled([
-          discoverLiteLLMModels(baseURL!, apiKey, customHeaders),
-          discoverLiteLLMModelInfo(baseURL!, apiKey, customHeaders),
-        ])
-
-        if (modelsResult.status === 'rejected') {
-          const error = modelsResult.reason
-          console.warn(
-            '[opencode-litellm] Model discovery failed:',
-            error instanceof Error ? error.message : String(error),
-          )
-          return
-        }
-
-        const discovered = modelsResult.value
-        let infoByName: Map<string, LiteLLMModelInfo> | null = null
-        if (infoResult.status === 'fulfilled') {
-          infoByName = infoResult.value
+        // Resolve base URL
+        let baseURL: string | null = null
+        if (configuredBase) {
+          baseURL = normalizeBaseURL(configuredBase)
         } else {
-          const reason = infoResult.reason
-          console.warn(
-            '[opencode-litellm] /v1/model/info unavailable; non-chat model filtering will use id heuristics only:',
-            reason instanceof Error ? reason.message : String(reason),
-          )
+          baseURL = await autoDetectLiteLLM(apiKey, customHeaders)
         }
 
-        if (discovered.length === 0) {
+        if (!baseURL) {
           console.warn(
-            '[opencode-litellm] LiteLLM responded but exposed zero models.',
+            `[opencode-litellm] No LiteLLM proxy found for provider "${providerId}". Configure options.baseURL or start LiteLLM on port 4000/8000/8080.`,
           )
-          return
+          continue
         }
 
-        let added = 0
-        let skipped = 0
-        let wildcards = 0
-        const unmatched: string[] = []
-        for (const model of discovered) {
-          // Wildcard entries (`deepseek/*`) are access rules, not
-          // callable models — invoking one sends a literal `*` upstream.
-          if (model.id.includes('*')) {
-            wildcards++
-            continue
+        // Initialize/Update the provider entry in config
+        if (!config.provider[providerId]) {
+          config.provider[providerId] = provider
+        }
+        const actualProvider = config.provider[providerId] as Record<string, unknown>
+
+        if (!actualProvider.npm) {
+          actualProvider.npm = '@ai-sdk/openai-compatible'
+        }
+
+        if (!actualProvider.options) {
+          actualProvider.options = { baseURL: `${baseURL}/v1` }
+        } else {
+          const actualOptions = actualProvider.options as Record<string, unknown>
+          if (!actualOptions.baseURL) {
+            actualOptions.baseURL = `${baseURL}/v1`
           }
-          // Don't overwrite user-curated entries
-          if (models[model.id]) continue
-          const info = infoByName?.get(model.id)
-          if (infoByName && !info) unmatched.push(model.id)
-          const entry = toConfigModel(info ? enrichModel(model, info) : model)
-          if (!entry) {
-            skipped++
-            continue
-          }
-          models[model.id] = entry
-          added++
         }
 
-        if (unmatched.length > 0) {
-          console.warn(
-            `[opencode-litellm] /v1/model/info has no entry for ${unmatched.length} model(s); ` +
-              `classification uses id heuristics for: ${unmatched.slice(0, 5).join(', ')}` +
-              (unmatched.length > 5 ? `, +${unmatched.length - 5} more` : ''),
+        if (!actualProvider.models) {
+          actualProvider.models = {}
+        }
+
+        const models = actualProvider.models as Record<string, unknown>
+
+        // Discover models with timeout
+        const work = async () => {
+          const alreadyInjected = injectedModelIds.get(baseURL!)
+          if (
+            alreadyInjected &&
+            [...alreadyInjected].every((id) => models[id])
+          ) {
+            return
+          }
+
+          if (!(await checkLiteLLMHealth(baseURL!, apiKey, customHeaders))) {
+            console.warn(
+              `[opencode-litellm] LiteLLM appears offline or unauthorized for provider "${providerId}" at ${baseURL}`,
+            )
+            return
+          }
+
+          // `/v1/models` omits `mode` and capability metadata for
+          // database-defined models, so fetch `/v1/model/info` alongside
+          // it. The info call is best-effort: without it, classification
+          // falls back to id heuristics.
+          const [modelsResult, infoResult] = await Promise.allSettled([
+            discoverLiteLLMModels(baseURL!, apiKey, customHeaders),
+            discoverLiteLLMModelInfo(baseURL!, apiKey, customHeaders),
+          ])
+
+          if (modelsResult.status === 'rejected') {
+            const error = modelsResult.reason
+            console.warn(
+              `[opencode-litellm] Model discovery failed for provider "${providerId}":`,
+              error instanceof Error ? error.message : String(error),
+            )
+            return
+          }
+
+          const discovered = modelsResult.value
+          let infoByName: Map<string, LiteLLMModelInfo> | null = null
+          if (infoResult.status === 'fulfilled') {
+            infoByName = infoResult.value
+          } else {
+            const reason = infoResult.reason
+            console.warn(
+              `[opencode-litellm] /v1/model/info unavailable for provider "${providerId}"; non-chat model filtering will use id heuristics only:`,
+              reason instanceof Error ? reason.message : String(reason),
+            )
+          }
+
+          if (discovered.length === 0) {
+            console.warn(
+              `[opencode-litellm] LiteLLM responded for provider "${providerId}" but exposed zero models.`,
+            )
+            return
+          }
+
+          let added = 0
+          let skipped = 0
+          let wildcards = 0
+          const unmatched: string[] = []
+          for (const model of discovered) {
+            // Wildcard entries (`deepseek/*`) are access rules, not
+            // callable models — invoking one sends a literal `*` upstream.
+            if (model.id.includes('*')) {
+              wildcards++
+              continue
+            }
+            // Don't overwrite user-curated entries
+            if (models[model.id]) continue
+            const info = infoByName?.get(model.id)
+            if (infoByName && !info) unmatched.push(model.id)
+            const entry = toConfigModel(info ? enrichModel(model, info) : model)
+            if (!entry) {
+              skipped++
+              continue
+            }
+            models[model.id] = entry
+            added++
+          }
+
+          if (unmatched.length > 0) {
+            console.warn(
+              `[opencode-litellm] /v1/model/info has no entry for ${unmatched.length} model(s) on provider "${providerId}"; ` +
+                `classification uses id heuristics for: ${unmatched.slice(0, 5).join(', ')}` +
+                (unmatched.length > 5 ? `, +${unmatched.length - 5} more` : ''),
+            )
+          }
+
+          // Remove the seed placeholder if real models were discovered
+          if (models['_'] && Object.keys(models).length > 1) {
+            delete models['_']
+          }
+
+          injectedModelIds.set(baseURL!, new Set(Object.keys(models)))
+
+          console.log(
+            `[opencode-litellm] Discovered ${discovered.length} models for provider "${providerId}" from ${baseURL} ` +
+              `(${added} added` +
+              (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
+              (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +
+              ')',
           )
         }
 
-        // Remove the seed placeholder if real models were discovered
-        if (models['_'] && Object.keys(models).length > 1) {
-          delete models['_']
-        }
-
-        injectedModelIds.set(baseURL!, new Set(Object.keys(models)))
-
-        console.log(
-          `[opencode-litellm] Discovered ${discovered.length} models from ${baseURL} ` +
-            `(${added} added` +
-            (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
-            (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +
-            ')',
-        )
+        await Promise.race([
+          work(),
+          new Promise<void>((resolve) =>
+            setTimeout(resolve, DISCOVERY_TIMEOUT_MS),
+          ),
+        ])
       }
-
-      await Promise.race([
-        work(),
-        new Promise<void>((resolve) =>
-          setTimeout(resolve, DISCOVERY_TIMEOUT_MS),
-        ),
-      ])
     },
   }
 }

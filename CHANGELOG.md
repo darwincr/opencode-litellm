@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/yuseferi/opencode-litellm/compare/v0.6.0...v0.7.0) (2026-07-24)
+
+
+### Features
+
+* **plugin:** support multiple differently-named LiteLLM providers ([8d446d1](https://github.com/yuseferi/opencode-litellm/commit/8d446d117f89fef77650eabcb5d5e834ace90b3a))
+
 # [0.6.0](https://github.com/yuseferi/opencode-litellm/compare/v0.5.0...v0.6.0) (2026-07-24)
 
 

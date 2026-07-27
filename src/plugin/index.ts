@@ -10,6 +10,11 @@ import {
   formatModelName,
   categorizeModel,
 } from '../utils/format-model-name'
+import {
+  applyModelsDevMetadata,
+  loadModelsDevIndex,
+  matchModelsDev,
+} from '../utils/models-dev'
 import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 
 const CHAT_PROVIDER_ID = 'litellm'
@@ -254,6 +259,7 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
         const customHeaders = readCustomHeaders(options)
         const includePatterns = readModelPatterns(options, 'modelFilter')
         const excludePatterns = readModelPatterns(options, 'excludeModels')
+        const useModelsDev = options.modelsDev !== false
 
         // Resolve base URL
         let baseURL: string | null = null
@@ -309,6 +315,12 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             return
           }
 
+          // Kick off the (memoized) models.dev fetch so it overlaps the
+          // health check and discovery round-trips.
+          const modelsDevPromise = useModelsDev
+            ? loadModelsDevIndex()
+            : Promise.resolve(null)
+
           if (!(await checkLiteLLMHealth(baseURL!, apiKey, customHeaders))) {
             console.warn(
               `[opencode-litellm] LiteLLM appears offline or unauthorized for provider "${providerId}" at ${baseURL}`,
@@ -353,10 +365,20 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             return
           }
 
+          const modelsDevIndex = await modelsDevPromise
+          if (useModelsDev && !modelsDevIndex) {
+            console.warn(
+              `[opencode-litellm] models.dev catalog unavailable; injecting provider "${providerId}" without variants/cost enrichment`,
+            )
+          }
+          const npm =
+            typeof actualProvider.npm === 'string' ? actualProvider.npm : undefined
+
           let added = 0
           let skipped = 0
           let wildcards = 0
           let filteredOut = 0
+          let enriched = 0
           const unmatched: string[] = []
           for (const model of discovered) {
             // Wildcard entries (`deepseek/*`) are access rules, not
@@ -383,6 +405,13 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
               skipped++
               continue
             }
+            if (modelsDevIndex) {
+              const catalogEntry = matchModelsDev(modelsDevIndex, model.id)
+              if (catalogEntry) {
+                applyModelsDevMetadata(entry, catalogEntry, npm, model.id)
+                enriched++
+              }
+            }
             models[model.id] = entry
             added++
           }
@@ -405,6 +434,7 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           console.log(
             `[opencode-litellm] Discovered ${discovered.length} models for provider "${providerId}" from ${baseURL} ` +
               `(${added} added` +
+              (enriched > 0 ? `, ${enriched} enriched via models.dev` : '') +
               (filteredOut > 0 ? `, ${filteredOut} filtered out` : '') +
               (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
               (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +

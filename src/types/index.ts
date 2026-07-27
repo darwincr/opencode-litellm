@@ -131,6 +131,13 @@ export interface LiteLLMOptions {
    */
   excludeModels?: string[]
   /**
+   * Enrich discovered models with metadata from https://models.dev
+   * (pricing, limits, modalities, and `reasoning_options`-derived
+   * `variants` for thinking/effort control). Defaults to `true`; set to
+   * `false` to disable the catalog fetch.
+   */
+  modelsDev?: boolean
+  /**
    * Routing policy for discovered models. See {@link TransportPolicy}.
    * Defaults to `'auto'`.
    */

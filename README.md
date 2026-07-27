@@ -243,6 +243,31 @@ Notes:
   read that endpoint; discovery still works, just without pricing/mode
   metadata.
 
+### Automatic variants / thinking control via models.dev
+
+Discovered models are enriched from the [models.dev](https://models.dev)
+catalog (the same dataset OpenCode uses for its built-in providers).
+Matching strips route prefixes (`CLIProxyAnthropic/claude-opus-5` →
+`claude-opus-5`) and common alias suffixes (`gemini-3.5-flash-low` →
+`gemini-3.5-flash`), then fills in:
+
+- **`variants`** generated from the catalog's `reasoning_options`,
+  shaped per adapter — `effort` levels become `reasoningEffort`
+  (openai-compatible), `thinking: adaptive` + `effort`
+  (`@ai-sdk/anthropic`, gated on models that support it), or
+  `thinkingConfig.thinkingLevel` (`@ai-sdk/google`); `budget_tokens`
+  becomes `high`/`max` thinking-budget variants; `toggle` becomes a
+  `none` variant that disables reasoning.
+- **`cost`** (models.dev list prices, per-million) when LiteLLM didn't
+  provide pricing. If your proxy bills custom rates, hand-curate those
+  entries — curated entries are always preserved verbatim.
+- **`limit`**, **`modalities`**, `attachment`, `tool_call`, `reasoning`
+  flags when missing.
+
+Disable with `"modelsDev": false` in the provider options. The catalog
+fetch is memoized per process, capped at 10 s, and failures degrade to
+plain discovery.
+
 ### Reasoning models (gpt-5, o1/o3/o4)
 
 OpenAI's reasoning-tier models reject requests that combine `reasoning_effort`

@@ -32,6 +32,10 @@ export interface LiteLLMModel {
   supports_reasoning?: boolean
   supports_pdf_input?: boolean
   supports_audio_input?: boolean
+  input_cost_per_token?: number
+  output_cost_per_token?: number
+  cache_read_input_token_cost?: number
+  cache_creation_input_token_cost?: number
 }
 
 export interface LiteLLMModelsResponse {
@@ -58,6 +62,11 @@ export interface LiteLLMModelInfo {
   supports_reasoning?: boolean
   supports_pdf_input?: boolean
   supports_audio_input?: boolean
+  /** USD per input token; converted to per-million for OpenCode `cost`. */
+  input_cost_per_token?: number
+  output_cost_per_token?: number
+  cache_read_input_token_cost?: number
+  cache_creation_input_token_cost?: number
 }
 
 /** A single entry returned by LiteLLM's `/v1/model/info` endpoint. */
@@ -93,6 +102,34 @@ export type TransportPolicy = 'auto' | Transport
 export interface LiteLLMOptions {
   baseURL?: string
   apiKey?: string
+  /**
+   * Mark a provider with any id (e.g. `my-proxy`) as LiteLLM-backed so
+   * the plugin discovers models for it. Providers whose id is `litellm`
+   * or starts with `litellm-`/`litellm_` are matched automatically.
+   */
+  litellm?: boolean
+  /**
+   * Base URL used ONLY for model discovery (`/v1/models`,
+   * `/v1/model/info`). Set this when the provider's `baseURL` points at
+   * an adapter-specific path that isn't the proxy root — e.g. the
+   * `@ai-sdk/google` adapter needs `…/v1beta/models`, which is not a
+   * valid discovery root. Defaults to `baseURL`.
+   */
+  discoveryBaseURL?: string
+  /**
+   * Glob allowlist applied to discovered model ids (`*` matches any
+   * characters). When set, ONLY matching models are injected into this
+   * provider. Essential when several providers share one LiteLLM proxy
+   * and each should receive a different slice of the catalog, e.g.
+   * `["CLIProxyAnthropic/*"]` for an `@ai-sdk/anthropic` provider.
+   * Defaults to all models.
+   */
+  modelFilter?: string[]
+  /**
+   * Glob denylist applied after {@link modelFilter}. Matching models
+   * are never injected. Hand-curated `models` entries are unaffected.
+   */
+  excludeModels?: string[]
   /**
    * Routing policy for discovered models. See {@link TransportPolicy}.
    * Defaults to `'auto'`.

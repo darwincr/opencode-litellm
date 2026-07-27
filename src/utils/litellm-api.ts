@@ -12,12 +12,20 @@ const FETCH_TIMEOUT_MS = 15000
 
 /**
  * Normalise a base URL so the rest of the plugin can rely on a
- * predictable shape (no trailing slash, no `/v1` suffix).
+ * predictable shape (no trailing slash, no API-surface suffix).
+ *
+ * Strips the adapter-specific path suffixes users configure for the
+ * various AI SDK adapters — `/v1` (openai-compatible / anthropic) and
+ * `/v1beta/models` / `/v1beta` (`@ai-sdk/google`) — so discovery always
+ * targets the proxy root.
  */
 export function normalizeBaseURL(baseURL: string = DEFAULT_LITELLM_URL): string {
   let normalized = baseURL.replace(/\/+$/, '')
-  if (normalized.endsWith('/v1')) {
-    normalized = normalized.slice(0, -3)
+  for (const suffix of ['/v1beta/models', '/v1beta', '/v1']) {
+    if (normalized.endsWith(suffix)) {
+      normalized = normalized.slice(0, -suffix.length)
+      break
+    }
   }
   return normalized
 }

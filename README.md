@@ -180,6 +180,69 @@ If you want to rename a model in the picker, pin its `organizationOwner`, or oth
 
 Here, `openai/gpt-4o` keeps your custom name; every other model from the proxy is still discovered and added automatically.
 
+### Multiple providers sharing one proxy (mixed adapters, per-provider filtering)
+
+One LiteLLM proxy can back **several OpenCode providers**, each using a
+different AI SDK adapter and receiving a different slice of the model
+catalog. Opt a provider in with `"litellm": true` (any provider id works;
+ids starting with `litellm` are matched automatically), and slice the
+catalog with `modelFilter` / `excludeModels` globs:
+
+```jsonc
+{
+  "provider": {
+    "my-openai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://litellm.example.com/",
+        "apiKey": "{env:LITELLM_API_KEY}",
+        "litellm": true,
+        "modelFilter": ["zai/*", "azure/*"],       // only these families
+        "excludeModels": ["azure/*-preview"]       // …minus these
+      }
+    },
+    "my-anthropic": {
+      "npm": "@ai-sdk/anthropic",                  // adapter is preserved
+      "options": {
+        "baseURL": "https://litellm.example.com/v1",
+        "apiKey": "{env:LITELLM_API_KEY}",
+        "litellm": true,
+        "modelFilter": ["anthropic/*"]
+      }
+    },
+    "my-google": {
+      "npm": "@ai-sdk/google",
+      "options": {
+        // Adapter path — not a valid discovery root, so point
+        // discovery at the proxy root explicitly:
+        "baseURL": "https://litellm.example.com/v1beta/models",
+        "discoveryBaseURL": "https://litellm.example.com",
+        "apiKey": "{env:LITELLM_API_KEY}",
+        "litellm": true,
+        "modelFilter": ["gemini/*"]
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- The plugin never changes a provider's `npm` adapter — it only fills it
+  in (as `@ai-sdk/openai-compatible`) when missing. Anthropic / Google /
+  any other adapter configs are injected into as-is.
+- `modelFilter` is an allowlist (default: everything); `excludeModels`
+  is applied after it. `*` matches any characters, everything else is
+  literal.
+- Common adapter path suffixes (`/v1`, `/v1beta`, `/v1beta/models`) are
+  stripped automatically when deriving the discovery URL, so
+  `discoveryBaseURL` is only needed for unusual layouts.
+- When `/v1/model/info` is reachable, per-model pricing
+  (`input_cost_per_token` etc.) is converted to OpenCode's per-million
+  `cost` block automatically. Keys restricted to `llm_api_routes` can't
+  read that endpoint; discovery still works, just without pricing/mode
+  metadata.
+
 ### Reasoning models (gpt-5, o1/o3/o4)
 
 OpenAI's reasoning-tier models reject requests that combine `reasoning_effort`

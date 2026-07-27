@@ -43,6 +43,32 @@ function isLiteLLMProvider(
 }
 
 /**
+ * Compile a `*`-glob pattern (e.g. `CLIProxyAnthropic/*`) into an
+ * anchored RegExp. Everything except `*` is matched literally.
+ */
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+  return new RegExp(`^${escaped}$`)
+}
+
+/**
+ * Read a string-array option (`modelFilter` / `excludeModels`) off the
+ * provider options block and compile each entry as a glob.
+ */
+function readModelPatterns(
+  options: Record<string, unknown>,
+  key: 'modelFilter' | 'excludeModels',
+): RegExp[] {
+  const raw = options[key]
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    .map(globToRegExp)
+}
+
+/**
  * Read `customHeaders` from a provider options block.
  */
 function readCustomHeaders(
@@ -77,7 +103,16 @@ function enrichModel(model: LiteLLMModel, info: LiteLLMModelInfo): LiteLLMModel 
     supports_reasoning: model.supports_reasoning ?? info.supports_reasoning,
     supports_pdf_input: model.supports_pdf_input ?? info.supports_pdf_input,
     supports_audio_input: model.supports_audio_input ?? info.supports_audio_input,
+    input_cost_per_token: model.input_cost_per_token ?? info.input_cost_per_token,
+    output_cost_per_token: model.output_cost_per_token ?? info.output_cost_per_token,
+    cache_read_input_token_cost: model.cache_read_input_token_cost ?? info.cache_read_input_token_cost,
+    cache_creation_input_token_cost: model.cache_creation_input_token_cost ?? info.cache_creation_input_token_cost,
   }
+}
+
+/** Convert LiteLLM's USD-per-token pricing to OpenCode's USD-per-million. */
+function toPerMillion(costPerToken: number): number {
+  return Math.round(costPerToken * 1e6 * 1e4) / 1e4
 }
 
 /**
@@ -116,6 +151,19 @@ function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
   if (model.supports_audio_input) input.push('audio')
   if (input.length > 1) {
     entry.modalities = { input, output: ['text'] }
+  }
+  if (model.input_cost_per_token != null || model.output_cost_per_token != null) {
+    const cost: Record<string, number> = {
+      input: toPerMillion(model.input_cost_per_token ?? 0),
+      output: toPerMillion(model.output_cost_per_token ?? 0),
+    }
+    if (model.cache_read_input_token_cost != null) {
+      cost.cache_read = toPerMillion(model.cache_read_input_token_cost)
+    }
+    if (model.cache_creation_input_token_cost != null) {
+      cost.cache_write = toPerMillion(model.cache_creation_input_token_cost)
+    }
+    entry.cost = cost
   }
   return entry
 }
@@ -185,19 +233,32 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
         const options = (provider.options ?? {}) as Record<string, unknown>
         const configuredBase =
           typeof options.baseURL === 'string' ? options.baseURL : undefined
+        // `discoveryBaseURL` decouples discovery from adapter-specific
+        // baseURL paths (e.g. @ai-sdk/google's `…/v1beta/models`).
+        const discoveryBase =
+          typeof options.discoveryBaseURL === 'string'
+            ? options.discoveryBaseURL
+            : configuredBase
+        // Ignore an apiKey that still contains an unresolved `{env:…}`
+        // placeholder — sending it verbatim would 401 against the proxy.
+        // Fall back to the env vars instead.
         const configuredKey =
-          typeof options.apiKey === 'string' && options.apiKey
+          typeof options.apiKey === 'string' &&
+          options.apiKey &&
+          !options.apiKey.includes('{env:')
             ? options.apiKey
             : undefined
         const envKey =
           process.env.LITELLM_API_KEY ?? process.env.LITELLM_MASTER_KEY
         const apiKey = configuredKey ?? envKey
         const customHeaders = readCustomHeaders(options)
+        const includePatterns = readModelPatterns(options, 'modelFilter')
+        const excludePatterns = readModelPatterns(options, 'excludeModels')
 
         // Resolve base URL
         let baseURL: string | null = null
-        if (configuredBase) {
-          baseURL = normalizeBaseURL(configuredBase)
+        if (discoveryBase) {
+          baseURL = normalizeBaseURL(discoveryBase)
         } else {
           baseURL = await autoDetectLiteLLM(apiKey, customHeaders)
         }
@@ -234,9 +295,13 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
 
         const models = actualProvider.models as Record<string, unknown>
 
+        // Several providers can share one proxy baseURL with different
+        // filters, so the repeat-invocation cache is keyed per provider.
+        const cacheKey = `${providerId}::${baseURL}`
+
         // Discover models with timeout
         const work = async () => {
-          const alreadyInjected = injectedModelIds.get(baseURL!)
+          const alreadyInjected = injectedModelIds.get(cacheKey)
           if (
             alreadyInjected &&
             [...alreadyInjected].every((id) => models[id])
@@ -291,12 +356,22 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           let added = 0
           let skipped = 0
           let wildcards = 0
+          let filteredOut = 0
           const unmatched: string[] = []
           for (const model of discovered) {
             // Wildcard entries (`deepseek/*`) are access rules, not
             // callable models — invoking one sends a literal `*` upstream.
             if (model.id.includes('*')) {
               wildcards++
+              continue
+            }
+            // Per-provider allow/deny globs
+            if (
+              (includePatterns.length > 0 &&
+                !includePatterns.some((p) => p.test(model.id))) ||
+              excludePatterns.some((p) => p.test(model.id))
+            ) {
+              filteredOut++
               continue
             }
             // Don't overwrite user-curated entries
@@ -325,11 +400,12 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             delete models['_']
           }
 
-          injectedModelIds.set(baseURL!, new Set(Object.keys(models)))
+          injectedModelIds.set(cacheKey, new Set(Object.keys(models)))
 
           console.log(
             `[opencode-litellm] Discovered ${discovered.length} models for provider "${providerId}" from ${baseURL} ` +
               `(${added} added` +
+              (filteredOut > 0 ? `, ${filteredOut} filtered out` : '') +
               (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
               (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +
               ')',

@@ -86,7 +86,8 @@ export function categorizeModel(model: LiteLLMModel): 'chat' | 'embedding' | 'im
   const id = model.id.toLowerCase()
   if (id.includes('embed') || id.includes('embedding')) return 'embedding'
   if (id.includes('whisper') || id.includes('tts')) return 'audio'
-  if (id.includes('dall-e') || id.includes('stable-diffusion') || id.includes('flux')) return 'image'
+  // `image` catches gpt-image-*, *-flash-image, qwen-image-* etc.
+  if (id.includes('dall-e') || id.includes('stable-diffusion') || id.includes('flux') || id.includes('image')) return 'image'
   return 'chat'
 }
 

@@ -99,6 +99,20 @@ export type Transport = 'chat' | 'responses'
  */
 export type TransportPolicy = 'auto' | Transport
 
+/**
+ * A single {@link LiteLLMOptions.modelDefaults} rule: a glob allowlist
+ * over model ids and the partial config-level model entry to merge in
+ * for matches.
+ */
+export interface ModelDefaultsRule {
+  /** `*`-globs matched against the LiteLLM model id. */
+  match: string[]
+  /** `*`-globs excluded from this rule; evaluated after {@link match}. */
+  exclude?: string[]
+  /** Partial OpenCode model entry (`limit`, `cost`, `variants`, …). */
+  model: Record<string, unknown>
+}
+
 export interface LiteLLMOptions {
   baseURL?: string
   apiKey?: string
@@ -137,6 +151,30 @@ export interface LiteLLMOptions {
    * `false` to disable the catalog fetch.
    */
   modelsDev?: boolean
+  /**
+   * Fallback metadata for discovered models the models.dev catalog does
+   * not know — typically self-hosted builds whose ids carry quantization
+   * suffixes (`omlx/Qwen3.6-27B-oQ8-fp16-mtp`).
+   *
+   * Each rule is a `*`-glob over the LiteLLM model id plus a partial
+   * model entry. Rules are evaluated in order and applied AFTER
+   * discovery and models.dev enrichment, filling only fields that are
+   * still missing — real catalog data always wins, and a later rule
+   * never overwrites an earlier one.
+   *
+   * ```json
+   * "modelDefaults": [
+   *   {
+   *     "match": ["omlx/*"],
+   *     "model": {
+   *       "reasoning": true,
+   *       "variants": { "low": { "reasoningEffort": "low" } }
+   *     }
+   *   }
+   * ]
+   * ```
+   */
+  modelDefaults?: ModelDefaultsRule[]
   /**
    * Routing policy for discovered models. See {@link TransportPolicy}.
    * Defaults to `'auto'`.

@@ -74,6 +74,78 @@ function readModelPatterns(
 }
 
 /**
+ * Read and compile `modelDefaults` rules off a provider options block.
+ * Malformed entries are ignored rather than failing discovery.
+ */
+function readModelDefaults(
+  options: Record<string, unknown>,
+): Array<{ match: RegExp[]; exclude: RegExp[]; model: Record<string, unknown> }> {
+  const raw = options.modelDefaults
+  if (!Array.isArray(raw)) return []
+  const compile = (v: unknown): RegExp[] =>
+    Array.isArray(v)
+      ? v.filter((p): p is string => typeof p === 'string' && p.length > 0).map(globToRegExp)
+      : []
+  const rules = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const rule = item as Record<string, unknown>
+    const match = compile(rule.match)
+    const model = rule.model
+    if (match.length === 0) continue
+    if (!model || typeof model !== 'object' || Array.isArray(model)) continue
+    rules.push({
+      match,
+      exclude: compile(rule.exclude),
+      model: model as Record<string, unknown>,
+    })
+  }
+  return rules
+}
+
+/**
+ * Recursively fill gaps in `target` from `defaults`. Existing values
+ * always win; plain objects are merged key-by-key so a rule can add a
+ * single missing variant without clobbering the discovered set.
+ */
+function fillDefaults(
+  target: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+): void {
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v)
+
+  for (const [key, value] of Object.entries(defaults)) {
+    const current = target[key]
+    if (current === undefined) {
+      target[key] = isPlainObject(value) ? structuredClone(value) : value
+    } else if (isPlainObject(current) && isPlainObject(value)) {
+      fillDefaults(current, value)
+    }
+  }
+}
+
+/**
+ * Apply the first matching `modelDefaults` rule set to a model entry.
+ * Every matching rule contributes, in declaration order, but only for
+ * fields still missing after discovery + models.dev enrichment.
+ */
+function applyModelDefaults(
+  entry: Record<string, unknown>,
+  modelId: string,
+  rules: Array<{ match: RegExp[]; exclude: RegExp[]; model: Record<string, unknown> }>,
+): boolean {
+  let applied = false
+  for (const rule of rules) {
+    if (!rule.match.some((p) => p.test(modelId))) continue
+    if (rule.exclude.some((p) => p.test(modelId))) continue
+    fillDefaults(entry, rule.model)
+    applied = true
+  }
+  return applied
+}
+
+/**
  * Read `customHeaders` from a provider options block.
  */
 function readCustomHeaders(
@@ -259,6 +331,7 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
         const customHeaders = readCustomHeaders(options)
         const includePatterns = readModelPatterns(options, 'modelFilter')
         const excludePatterns = readModelPatterns(options, 'excludeModels')
+        const modelDefaults = readModelDefaults(options)
         const useModelsDev = options.modelsDev !== false
 
         // Resolve base URL
@@ -379,6 +452,7 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           let wildcards = 0
           let filteredOut = 0
           let enriched = 0
+          let defaulted = 0
           const unmatched: string[] = []
           for (const model of discovered) {
             // Wildcard entries (`deepseek/*`) are access rules, not
@@ -412,6 +486,11 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
                 enriched++
               }
             }
+            // Fallback metadata for ids the catalog doesn't cover
+            // (self-hosted builds, quantized variants). Fills gaps only.
+            if (modelDefaults.length > 0 && applyModelDefaults(entry, model.id, modelDefaults)) {
+              defaulted++
+            }
             models[model.id] = entry
             added++
           }
@@ -435,6 +514,7 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             `[opencode-litellm] Discovered ${discovered.length} models for provider "${providerId}" from ${baseURL} ` +
               `(${added} added` +
               (enriched > 0 ? `, ${enriched} enriched via models.dev` : '') +
+              (defaulted > 0 ? `, ${defaulted} via modelDefaults` : '') +
               (filteredOut > 0 ? `, ${filteredOut} filtered out` : '') +
               (skipped > 0 ? `, ${skipped} non-chat hidden` : '') +
               (wildcards > 0 ? `, ${wildcards} wildcard ignored` : '') +

@@ -268,6 +268,46 @@ Disable with `"modelsDev": false` in the provider options. The catalog
 fetch is memoized per process, capped at 10 s, and failures degrade to
 plain discovery.
 
+### Fallback metadata for uncatalogued models (`modelDefaults`)
+
+Self-hosted builds rarely appear in models.dev — ids like
+`omlx/Qwen3.6-27B-oQ8-fp16-mtp` carry quantization suffixes that match
+nothing, so they arrive with no `variants`, no `limit`, and no
+reasoning flag. `modelDefaults` supplies that metadata by glob:
+
+```json
+"options": {
+  "litellm": true,
+  "modelDefaults": [
+    {
+      "match": ["omlx/*"],
+      "exclude": ["omlx/*ASR*", "omlx/whisper*"],
+      "model": {
+        "reasoning": true,
+        "tool_call": true,
+        "limit": { "context": 131072, "output": 131072 },
+        "cost": { "input": 0, "output": 0 },
+        "variants": {
+          "none": { "reasoningEffort": "none" },
+          "low": { "reasoningEffort": "low" },
+          "high": { "reasoningEffort": "high" }
+        }
+      }
+    }
+  ]
+}
+```
+
+- Applied **after** discovery and models.dev enrichment, and **fills
+  gaps only** — real catalog data always wins. A model the catalog does
+  know keeps its own `limit`/`cost` and only picks up the missing
+  fields.
+- Merging is recursive for plain objects, so a rule can add a missing
+  variant without clobbering discovered ones.
+- Rules are evaluated in declaration order; every match contributes, and
+  an earlier rule's value is never overwritten by a later one.
+- Hand-curated `models` entries are untouched, as always.
+
 ### Reasoning models (gpt-5, o1/o3/o4)
 
 OpenAI's reasoning-tier models reject requests that combine `reasoning_effort`

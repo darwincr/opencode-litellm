@@ -15,6 +15,7 @@ import {
   loadModelsDevIndex,
   matchModelsDev,
 } from '../utils/models-dev'
+import { DEFAULT_MCP_PREFIX, injectMcpServers } from './mcp'
 import type { LiteLLMModel, LiteLLMModelInfo } from '../types'
 
 const CHAT_PROVIDER_ID = 'litellm'
@@ -29,6 +30,14 @@ const DISCOVERY_TIMEOUT_MS = 20000
  * re-querying the proxy.
  */
 const injectedModelIds = new Map<string, Set<string>>()
+
+/**
+ * MCP servers belong to the proxy, not to a provider, so several
+ * providers pointing at one proxy must not each inject the same set.
+ * Keyed by discovery baseURL, for the same repeat-invocation reason as
+ * {@link injectedModelIds}.
+ */
+const injectedMcpBaseURLs = new Set<string>()
 
 /**
  * Helper to determine if a provider ID or its configured options indicate
@@ -59,12 +68,13 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * Read a string-array option (`modelFilter` / `excludeModels`) off the
- * provider options block and compile each entry as a glob.
+ * Read a string-array option (`modelFilter` / `excludeModels` /
+ * `mcpFilter` / `excludeMcpServers`) off the provider options block and
+ * compile each entry as a glob.
  */
 function readModelPatterns(
   options: Record<string, unknown>,
-  key: 'modelFilter' | 'excludeModels',
+  key: 'modelFilter' | 'excludeModels' | 'mcpFilter' | 'excludeMcpServers',
 ): RegExp[] {
   const raw = options[key]
   if (!Array.isArray(raw)) return []
@@ -333,6 +343,10 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
         const excludePatterns = readModelPatterns(options, 'excludeModels')
         const modelDefaults = readModelDefaults(options)
         const useModelsDev = options.modelsDev !== false
+        // MCP discovery is opt-in: it injects top-level `config.mcp`
+        // entries, which is a broader side effect than populating one
+        // provider's model map.
+        const useMcp = options.litellmMcp === true
 
         // Resolve base URL
         let baseURL: string | null = null
@@ -347,6 +361,36 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             `[opencode-litellm] No LiteLLM proxy found for provider "${providerId}". Configure options.baseURL or start LiteLLM on port 4000/8000/8080.`,
           )
           continue
+        }
+
+        // Discover MCP servers off the same proxy. Independent of model
+        // discovery: it targets a different endpoint and writes to
+        // top-level `config.mcp`, so it runs even if models fail.
+        if (useMcp && !injectedMcpBaseURLs.has(baseURL)) {
+          injectedMcpBaseURLs.add(baseURL)
+          if (!config.mcp) config.mcp = {}
+          const prefix =
+            typeof options.litellmMcpPrefix === 'string'
+              ? options.litellmMcpPrefix
+              : DEFAULT_MCP_PREFIX
+          const summary = await injectMcpServers({
+            mcp: config.mcp as Record<string, unknown>,
+            baseURL,
+            apiKey,
+            customHeaders,
+            include: readModelPatterns(options, 'mcpFilter'),
+            exclude: readModelPatterns(options, 'excludeMcpServers'),
+            prefix,
+          })
+          if (summary) {
+            console.log(
+              `[opencode-litellm] Discovered ${summary.total} MCP server(s) from ${baseURL} ` +
+                `(${summary.added} added` +
+                (summary.filteredOut > 0 ? `, ${summary.filteredOut} filtered out` : '') +
+                (summary.skipped > 0 ? `, ${summary.skipped} unroutable` : '') +
+                ')',
+            )
+          }
         }
 
         // Initialize/Update the provider entry in config

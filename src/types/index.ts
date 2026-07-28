@@ -80,6 +80,32 @@ export interface LiteLLMModelInfoResponse {
   data?: LiteLLMModelInfoEntry[]
 }
 
+/**
+ * A single MCP server entry returned by LiteLLM's `/v1/mcp/server`
+ * endpoint.
+ *
+ * Only the fields the plugin relies on are typed. Responses to virtual
+ * keys restricted to `llm_api_routes` are sanitised by the proxy — most
+ * notably `url` is stripped — so nothing beyond the name/alias can be
+ * assumed present.
+ */
+export interface LiteLLMMcpServer {
+  server_id?: string
+  server_name?: string
+  /** Routing alias; what the gateway path segment must be built from. */
+  alias?: string
+  description?: string
+  /** `http`, `sse` or `stdio` — upstream transport, not the gateway's. */
+  transport?: string
+  auth_type?: string
+}
+
+/**
+ * `/v1/mcp/server` returns a bare array. The envelope form is accepted
+ * defensively in case a future LiteLLM version wraps it.
+ */
+export type LiteLLMMcpServerResponse = LiteLLMMcpServer[] | { data?: LiteLLMMcpServer[] }
+
 export type ModelType = 'chat' | 'embedding' | 'image' | 'audio' | 'unknown'
 
 /**
@@ -175,6 +201,47 @@ export interface LiteLLMOptions {
    * ```
    */
   modelDefaults?: ModelDefaultsRule[]
+  /**
+   * Discover the MCP servers exposed by the proxy (`/v1/mcp/server`)
+   * and inject one `mcp` entry per server into the OpenCode config,
+   * pointing at the proxy's MCP gateway.
+   *
+   * Opt-in (defaults to `false`) because — unlike model discovery,
+   * which only touches this provider — it writes to the top-level
+   * `mcp` section. When several providers share one proxy, enable it
+   * on exactly one of them; the plugin injects a given proxy's servers
+   * only once regardless.
+   *
+   * Requires a key allowed to GET `/v1/mcp/server`. Keys restricted to
+   * `llm_api_routes` qualify via LiteLLM's GET-only carve-out.
+   */
+  litellmMcp?: boolean
+  /**
+   * Prefix for injected `mcp` keys, keeping them distinct from
+   * hand-written entries. Defaults to `"litellm_"`, so a LiteLLM server
+   * aliased `zread` becomes `litellm_zread`.
+   *
+   * Set to `""` to inject under the bare alias — only safe if no
+   * hand-written entry can collide.
+   */
+  litellmMcpPrefix?: string
+  /**
+   * Glob allowlist applied to discovered MCP servers (`*` matches any
+   * characters). When set, ONLY matching servers are injected.
+   * Defaults to all servers.
+   *
+   * Globs match the LiteLLM routing alias (e.g. `zread`), NOT the
+   * prefixed OpenCode key.
+   */
+  mcpFilter?: string[]
+  /**
+   * Glob denylist applied after {@link mcpFilter}. Matching servers are
+   * never injected. Hand-written `mcp` entries are unaffected.
+   *
+   * Useful for suppressing servers the proxy registers but that expose
+   * no usable tools.
+   */
+  excludeMcpServers?: string[]
   /**
    * Routing policy for discovered models. See {@link TransportPolicy}.
    * Defaults to `'auto'`.

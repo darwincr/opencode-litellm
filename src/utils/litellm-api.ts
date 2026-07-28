@@ -1,8 +1,9 @@
-import type { LiteLLMModel, LiteLLMModelInfo, LiteLLMModelInfoResponse, LiteLLMModelsResponse } from '../types'
+import type { LiteLLMMcpServer, LiteLLMMcpServerResponse, LiteLLMModel, LiteLLMModelInfo, LiteLLMModelInfoResponse, LiteLLMModelsResponse } from '../types'
 
 export const DEFAULT_LITELLM_URL = 'http://localhost:4000'
 const MODELS_ENDPOINT = '/v1/models'
 const MODEL_INFO_ENDPOINT = '/v1/model/info'
+const MCP_SERVER_ENDPOINT = '/v1/mcp/server'
 // Health checks fail fast so auto-detection stays snappy; the actual
 // discovery fetches get a generous budget because `/v1/model/info`
 // payloads from remote proxies with many database-defined models can
@@ -148,6 +149,40 @@ export async function discoverLiteLLMModelInfo(
     }
   }
   return infoByName
+}
+
+/**
+ * Discover the MCP servers a key is allowed to reach, via
+ * `/v1/mcp/server`.
+ *
+ * LiteLLM grants this route to keys restricted to `llm_api_routes`
+ * through an explicit GET-only carve-out, so it works with the same
+ * credential used for model discovery. Responses for such restricted
+ * keys are sanitised — `url`, `credentials` and `allowed_tools` are
+ * stripped — but `server_name`/`alias` survive, and those are all the
+ * gateway needs to route.
+ */
+export async function discoverLiteLLMMcpServers(
+  baseURL: string = DEFAULT_LITELLM_URL,
+  apiKey?: string,
+  customHeaders?: Record<string, string>,
+): Promise<LiteLLMMcpServer[]> {
+  const url = buildAPIURL(baseURL, MCP_SERVER_ENDPOINT)
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: buildHeaders(apiKey, customHeaders),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+
+  if (!response.ok) {
+    throw new Error(`LiteLLM responded with HTTP ${response.status} ${response.statusText}`)
+  }
+
+  // The endpoint returns a bare array; tolerate a `{data: […]}` envelope
+  // in case a future version wraps it like the other list endpoints.
+  const data = (await response.json()) as LiteLLMMcpServerResponse
+  if (Array.isArray(data)) return data
+  return data?.data ?? []
 }
 
 /**

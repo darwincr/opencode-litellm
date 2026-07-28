@@ -308,6 +308,62 @@ reasoning flag. `modelDefaults` supplies that metadata by glob:
   an earlier rule's value is never overwritten by a later one.
 - Hand-curated `models` entries are untouched, as always.
 
+### MCP server discovery (`litellmMcp`)
+
+LiteLLM can also act as an [MCP](https://modelcontextprotocol.io) gateway,
+fronting a set of MCP servers behind the same key you already use for
+models. Set `litellmMcp: true` and the plugin discovers them from
+`/v1/mcp/server` and injects one OpenCode `mcp` entry per server:
+
+```json
+"options": {
+  "litellm": true,
+  "litellmMcp": true,
+  "mcpFilter": ["zread", "web_*"],
+  "excludeMcpServers": ["web_search_prime"]
+}
+```
+
+A proxy exposing `zread` and `web_reader` yields:
+
+```json
+"mcp": {
+  "litellm_zread": {
+    "type": "remote",
+    "url": "https://your-proxy/mcp/zread",
+    "enabled": true,
+    "headers": { "x-litellm-api-key": "Bearer sk-…" }
+  },
+  "litellm_web_reader": { "…": "…" }
+}
+```
+
+- **Opt-in**, unlike model discovery, because it writes to the
+  **top-level `mcp` section** rather than a single provider. When
+  several providers share one proxy, enable it on just one — the plugin
+  injects a given proxy's servers only once either way.
+- Keys are prefixed **`litellm_`** so injected entries can't be confused
+  with hand-written ones. Override with `litellmMcpPrefix` (`""` for
+  bare aliases).
+- **One entry per server**, not a single aggregate `/mcp/` entry: tool
+  names stay unprefixed, OpenCode reports health per server, and one
+  unreachable upstream doesn't take down the rest.
+- `mcpFilter` / `excludeMcpServers` are `*`-globs mirroring
+  `modelFilter` / `excludeModels`. They match the **LiteLLM routing
+  alias** (`zread`), not the prefixed key. `excludeMcpServers` is the
+  way to suppress a server that's registered but exposes no usable
+  tools.
+- Hand-written `mcp` entries always win — an existing key is never
+  overwritten, exactly like curated `models`.
+- Auth uses `x-litellm-api-key: Bearer <key>`, leaving `Authorization`
+  free for servers that delegate it upstream. The `Bearer ` prefix is
+  required by LiteLLM on this header.
+
+Requires a key permitted to `GET /v1/mcp/server`. Keys restricted to
+`llm_api_routes` qualify via LiteLLM's GET-only carve-out for the MCP
+discovery routes, so the credential used for model discovery normally
+works unchanged.
+
 ### Reasoning models (gpt-5, o1/o3/o4)
 
 OpenAI's reasoning-tier models reject requests that combine `reasoning_effort`

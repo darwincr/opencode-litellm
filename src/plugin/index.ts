@@ -6,10 +6,7 @@ import {
   discoverLiteLLMModels,
   normalizeBaseURL,
 } from '../utils/litellm-api'
-import {
-  formatModelName,
-  categorizeModel,
-} from '../utils/format-model-name'
+import { categorizeModel } from '../utils/format-model-name'
 import {
   applyModelsDevMetadata,
   loadModelsDevIndex,
@@ -69,12 +66,12 @@ function globToRegExp(pattern: string): RegExp {
 
 /**
  * Read a string-array option (`modelFilter` / `excludeModels` /
- * `mcpFilter` / `excludeMcpServers`) off the provider options block and
+ * `mcpFilter` / `excludeMcpServers` / `enabledMcpServers`) off the provider options block and
  * compile each entry as a glob.
  */
 function readModelPatterns(
   options: Record<string, unknown>,
-  key: 'modelFilter' | 'excludeModels' | 'mcpFilter' | 'excludeMcpServers',
+  key: 'modelFilter' | 'excludeModels' | 'mcpFilter' | 'excludeMcpServers' | 'enabledMcpServers',
 ): RegExp[] {
   const raw = options[key]
   if (!Array.isArray(raw)) return []
@@ -215,7 +212,7 @@ function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
     return null
   }
   const entry: Record<string, unknown> = {
-    name: formatModelName(model),
+    name: model.id,
   }
   if (model.max_input_tokens || model.max_output_tokens) {
     entry.limit = {
@@ -380,7 +377,9 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             customHeaders,
             include: readModelPatterns(options, 'mcpFilter'),
             exclude: readModelPatterns(options, 'excludeMcpServers'),
+            enable: readModelPatterns(options, 'enabledMcpServers'),
             prefix,
+            enabled: options.litellmMcpEnabled !== false,
           })
           if (summary) {
             console.log(

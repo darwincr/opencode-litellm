@@ -72,7 +72,7 @@ opencode
 |---|---|
 | 🔍 **Auto-detection** | Probes `localhost:4000`, `:8000`, `:8080` and adopts the first responsive proxy. |
 | 📡 **Dynamic discovery** | Queries `/v1/models` so your OpenCode model picker always reflects your live `model_list`. |
-| 🏷️ **Smart formatting** | Turns `anthropic/claude-3-5-sonnet` into `Claude 3 5 Sonnet` in the picker — handles versions, sizes, quantizations, and brand-cased names like `gpt-4o`. |
+| 🏷️ **Exact model IDs** | Preserves LiteLLM IDs verbatim in the picker, including routing prefixes such as `omlx/Qwen3.6-27B` and `CLIProxy/gpt-5.6-sol`. |
 | 🧠 **Modality-aware** | Enriches `/v1/models` entries with `/v1/model/info` (`mode`, token limits, capability flags) and hides embedding / image / audio models from the picker. |
 | 🧪 **Reasoning-aware routing** | Auto-routes `gpt-5*` / `o1`/`o3`/`o4*` models through a sibling `litellm-responses` provider that uses `/v1/responses`, so tools + `reasoning_effort` actually work. Override per model via `responsesApiModels` / `chatApiModels`. |
 | 🏢 **Provider extraction** | Pulls `litellm_provider` (or the `provider/model` prefix) into `organizationOwner` so models group correctly in the UI. |
@@ -319,6 +319,8 @@ models. Set `litellmMcp: true` and the plugin discovers them from
 "options": {
   "litellm": true,
   "litellmMcp": true,
+  "litellmMcpEnabled": false,
+  "enabledMcpServers": ["docs_langchain"],
   "mcpFilter": ["zread", "web_*"],
   "excludeMcpServers": ["web_search_prime"]
 }
@@ -331,7 +333,7 @@ A proxy exposing `zread` and `web_reader` yields:
   "litellm_zread": {
     "type": "remote",
     "url": "https://your-proxy/mcp/zread",
-    "enabled": true,
+    "enabled": false,
     "headers": { "x-litellm-api-key": "Bearer sk-…" }
   },
   "litellm_web_reader": { "…": "…" }
@@ -342,6 +344,14 @@ A proxy exposing `zread` and `web_reader` yields:
   **top-level `mcp` section** rather than a single provider. When
   several providers share one proxy, enable it on just one — the plugin
   injects a given proxy's servers only once either way.
+- Discovered servers are enabled by default. Set
+  `litellmMcpEnabled: false` to register every server disabled and enable
+  individual servers on demand in OpenCode.
+- `enabledMcpServers` is a `*`-glob allowlist that forces matching
+  discovered servers enabled. It matches bare LiteLLM aliases and is
+  designed for project configs layered over a disabled global default.
+  For example, `enabledMcpServers: ["docs_langchain", "zread"]` enables
+  only those two without repeating their URLs or authentication headers.
 - Keys are prefixed **`litellm_`** so injected entries can't be confused
   with hand-written ones. Override with `litellmMcpPrefix` (`""` for
   bare aliases).
@@ -466,7 +476,7 @@ sequenceDiagram
     Plugin->>LL: GET /v1/model/info (best-effort, for `mode` + limits)
     LL-->>Plugin: { data: [...models] } + per-model info
     Plugin->>Plugin: enrich models, hide non-chat (embedding/image/audio)
-    Plugin->>Plugin: format names, infer modalities, extract owner
+    Plugin->>Plugin: preserve model IDs and infer modalities
     Plugin->>Plugin: bucket each model by transport (chat vs responses)
     Plugin->>OC: merge chat-completions models into provider.litellm
     Plugin->>OC: merge responses models into provider.litellm-responses (lazy)
@@ -476,7 +486,7 @@ sequenceDiagram
 1. On OpenCode startup the `config` lifecycle hook fires.
 2. If `provider.litellm` exists, its `baseURL` is used. Otherwise common ports are probed.
 3. A health check (`GET /v1/models`) verifies the proxy is reachable and authorized.
-4. Models from the response are enriched with `/v1/model/info` metadata (`mode`, token limits, capability flags — `/v1/models` omits these for database-defined models) and converted into OpenCode model entries keyed by `id`, with formatted `name`, `organizationOwner`, and inferred `modalities`. Non-chat models (embedding / image / audio) are excluded from the picker.
+4. Models from the response are enriched with `/v1/model/info` metadata (`mode`, token limits, capability flags — `/v1/models` omits these for database-defined models) and converted into OpenCode model entries keyed and displayed by their exact LiteLLM `id`, with inferred `modalities`. Non-chat models (embedding / image / audio) are excluded from the picker.
 5. Each model is bucketed by transport — reasoning-tier models (`gpt-5*`, `o1`/`o3`/`o4*`, or anything with `mode === 'responses'`) go into the `litellm-responses` provider; everything else goes into `litellm`. Per-model overrides via `responsesApiModels` / `chatApiModels` win.
 6. Discovered models are merged on top of any user-defined ones — never overwriting them. A model is skipped if its key already exists under **either** provider.
 7. The whole flow is wrapped in a `Promise.race` against a 20 s timeout so a slow proxy never blocks boot.

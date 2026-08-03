@@ -1,9 +1,6 @@
 import type { Model as ModelV2 } from '@opencode-ai/sdk/v2'
 import type { LiteLLMModel } from '../types'
-import {
-  categorizeModel,
-  formatModelName,
-} from '../utils/format-model-name'
+import { categorizeModel } from '../utils/format-model-name'
 
 /**
  * Build an OpenCode V2 `Model` entry from a discovered LiteLLM model.
@@ -30,7 +27,7 @@ export function buildModelV2(
     id: model.id,
     providerID,
     api,
-    name: formatModelName(model),
+    name: model.id,
     capabilities: {
       temperature: true,
       reasoning: !!model.supports_reasoning,

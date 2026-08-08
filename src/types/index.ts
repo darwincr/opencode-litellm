@@ -223,13 +223,6 @@ export interface LiteLLMOptions {
    */
   litellmMcpEnabled?: boolean
   /**
-   * Glob allowlist of discovered MCP servers to enable regardless of
-   * {@link litellmMcpEnabled}. Globs match the bare LiteLLM routing alias,
-   * making this suitable for project-level opt-ins such as
-   * `["docs_langchain", "zread"]` while the global default is disabled.
-   */
-  enabledMcpServers?: string[]
-  /**
    * Prefix for injected `mcp` keys, keeping them distinct from
    * hand-written entries. Defaults to `"litellm_"`, so a LiteLLM server
    * aliased `zread` becomes `litellm_zread`.

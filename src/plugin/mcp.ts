@@ -57,11 +57,10 @@ export async function injectMcpServers(options: {
   customHeaders?: Record<string, string>
   include: RegExp[]
   exclude: RegExp[]
-  enable: RegExp[]
   prefix: string
   enabled: boolean
 }): Promise<{ added: number; total: number; filteredOut: number; skipped: number } | null> {
-  const { mcp, baseURL, apiKey, customHeaders, include, exclude, enable, prefix, enabled } = options
+  const { mcp, baseURL, apiKey, customHeaders, include, exclude, prefix, enabled } = options
 
   let discovered: LiteLLMMcpServer[]
   try {
@@ -116,7 +115,7 @@ export async function injectMcpServers(options: {
     const entry: Record<string, unknown> = {
       type: 'remote',
       url: mcpGatewayURL(baseURL, server.alias),
-      enabled: enabled || enable.some((pattern) => pattern.test(server.alias)),
+      enabled,
     }
     if (Object.keys(headers).length > 0) entry.headers = headers
     mcp[server.key] = entry

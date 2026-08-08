@@ -66,12 +66,12 @@ function globToRegExp(pattern: string): RegExp {
 
 /**
  * Read a string-array option (`modelFilter` / `excludeModels` /
- * `mcpFilter` / `excludeMcpServers` / `enabledMcpServers`) off the provider options block and
+ * `mcpFilter` / `excludeMcpServers`) off the provider options block and
  * compile each entry as a glob.
  */
 function readModelPatterns(
   options: Record<string, unknown>,
-  key: 'modelFilter' | 'excludeModels' | 'mcpFilter' | 'excludeMcpServers' | 'enabledMcpServers',
+  key: 'modelFilter' | 'excludeModels' | 'mcpFilter' | 'excludeMcpServers',
 ): RegExp[] {
   const raw = options[key]
   if (!Array.isArray(raw)) return []
@@ -377,7 +377,6 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
             customHeaders,
             include: readModelPatterns(options, 'mcpFilter'),
             exclude: readModelPatterns(options, 'excludeMcpServers'),
-            enable: readModelPatterns(options, 'enabledMcpServers'),
             prefix,
             enabled: options.litellmMcpEnabled !== false,
           })

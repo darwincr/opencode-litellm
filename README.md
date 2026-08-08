@@ -320,7 +320,6 @@ models. Set `litellmMcp: true` and the plugin discovers them from
   "litellm": true,
   "litellmMcp": true,
   "litellmMcpEnabled": false,
-  "enabledMcpServers": ["docs_langchain"],
   "mcpFilter": ["zread", "web_*"],
   "excludeMcpServers": ["web_search_prime"]
 }
@@ -345,13 +344,9 @@ A proxy exposing `zread` and `web_reader` yields:
   several providers share one proxy, enable it on just one — the plugin
   injects a given proxy's servers only once either way.
 - Discovered servers are enabled by default. Set
-  `litellmMcpEnabled: false` to register every server disabled and enable
-  individual servers on demand in OpenCode.
-- `enabledMcpServers` is a `*`-glob allowlist that forces matching
-  discovered servers enabled. It matches bare LiteLLM aliases and is
-  designed for project configs layered over a disabled global default.
-  For example, `enabledMcpServers: ["docs_langchain", "zread"]` enables
-  only those two without repeating their URLs or authentication headers.
+  `litellmMcpEnabled: false` to register every server disabled; OpenCode
+  still lists them, and you can turn individual servers on at runtime
+  from the MCP dialog (`mod+;` or the `/mcp` command, `space` to toggle).
 - Keys are prefixed **`litellm_`** so injected entries can't be confused
   with hand-written ones. Override with `litellmMcpPrefix` (`""` for
   bare aliases).

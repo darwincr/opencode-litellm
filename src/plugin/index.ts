@@ -21,26 +21,10 @@ const CHAT_PROVIDER_ID = 'litellm'
 const DISCOVERY_TIMEOUT_MS = 20000
 
 /**
- * OpenCode invokes the `config` hook several times per run with a
- * cumulative config object. Track which model ids we already injected
- * per baseURL so repeat invocations can return early instead of
- * re-querying the proxy.
- */
-const injectedModelIds = new Map<string, Set<string>>()
-
-/**
- * MCP servers belong to the proxy, not to a provider, so several
- * providers pointing at one proxy must not each inject the same set.
- * Keyed by discovery baseURL, for the same repeat-invocation reason as
- * {@link injectedModelIds}.
- */
-const injectedMcpBaseURLs = new Set<string>()
-
-/**
  * Helper to determine if a provider ID or its configured options indicate
  * compatibility with LiteLLM.
  */
-function isLiteLLMProvider(
+export function isLiteLLMProvider(
   providerId: string,
   options: Record<string, unknown>,
 ): boolean {
@@ -277,6 +261,9 @@ function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
  * }
  */
 export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
+  // Isolate discovery state between host instances (including v2 adapters).
+  const injectedModelIds = new Map<string, Set<string>>()
+  const injectedMcpBaseURLs = new Set<string>()
   return {
     config: async (config: any) => {
       // Ensure the provider entry exists
@@ -564,12 +551,17 @@ export const LiteLLMPlugin: Plugin = async (_input: PluginInput) => {
           )
         }
 
-        await Promise.race([
-          work(),
-          new Promise<void>((resolve) =>
-            setTimeout(resolve, DISCOVERY_TIMEOUT_MS),
-          ),
-        ])
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            work(),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, DISCOVERY_TIMEOUT_MS)
+            }),
+          ])
+        } finally {
+          clearTimeout(timer)
+        }
       }
     },
   }

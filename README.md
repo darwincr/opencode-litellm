@@ -647,3 +647,44 @@ Built on top of [LiteLLM](https://github.com/BerriAI/litellm) by the [BerriAI](h
 If this project saved you time, consider giving it a ⭐ on [GitHub](https://github.com/yuseferi/opencode-litellm).
 
 </div>
+# OpenCode v1 / v2 compatibility branch
+
+This fork exposes a native OpenCode v2 `Plugin.define` definition as its default
+export and a `server(input)` bridge for OpenCode v1 hosts that support object-form
+plugins (v1.18.29+). The existing named `LiteLLMPlugin` and
+`LiteLLMResponsesPlugin` exports remain available for legacy function loaders.
+
+Both adapters use this fork's discovery pipeline, including `modelFilter`,
+`excludeModels`, models.dev metadata and variants, `modelDefaults`, exact LiteLLM
+model aliases, and opt-in MCP discovery. The v2 adapter translates models into
+the native provider registry and MCP `enabled` into v2 `disabled`. It reconciles
+providers registered after setup and refreshes discovery on new sessions and
+credential switches. Curated models and MCP entries take precedence.
+
+## Local OpenCode v2 testing
+
+Install dependencies with `npm install --legacy-peer-deps`, then run
+`npm run build && npm test`. For a local checkout, OpenCode v2 resolves the root
+`index.ts` entrypoint. Point global configuration at the **directory**:
+
+```json
+{
+  "plugins": ["file:///root/workspace/opencode-litellm"],
+  "providers": {
+    "litellm": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "name": "LiteLLM (proxy)",
+      "settings": {
+        "baseURL": "http://192.168.1.212:4000/v1",
+        "apiKey": "{env:LITELLM_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Use singular `plugin`, `provider`, `npm`, and `options` on v1; use plural
+`plugins`, `providers`, `package`, and `settings` on v2. Restart the server after
+changing dependencies; source edits are watched by the v2 local-plugin loader.
+
+---

@@ -678,7 +678,7 @@ precedence, non-chat filtering, and native reasoning settings.
 ## Local OpenCode v2 testing
 
 Install dependencies with `npm install --legacy-peer-deps`, then run
-`npm run build && npm test`. For a local checkout, OpenCode v2 resolves the root
+`npm run typecheck && npm test`. For a local checkout, OpenCode v2 resolves the root
 `index.ts` entrypoint. Point global configuration at the **directory**:
 
 ```json
@@ -700,5 +700,23 @@ Install dependencies with `npm install --legacy-peer-deps`, then run
 Use singular `plugin`, `provider`, `npm`, and `options` on v1; use plural
 `plugins`, `providers`, `package`, and `settings` on v2. Restart the server after
 changing dependencies; source edits are watched by the v2 local-plugin loader.
+
+## Installing from GitHub
+
+OpenCode v2 can install the plugin straight from this repository:
+
+```json
+{
+  "plugins": [
+    { "package": "github:darwincr/opencode-litellm", "options": { "providerID": "litellm" } }
+  ]
+}
+```
+
+Keep `package.json` free of `build`, `prepare`, `prepack`, `preinstall`,
+`install`, and `postinstall` scripts. npm runs a "git dep preparation" install
+for git dependencies that declare any of them, and inside the compiled OpenCode
+binary that step re-invokes OpenCode instead of npm, failing with
+`NpmInstallFailedError: git dep preparation failed`.
 
 ---

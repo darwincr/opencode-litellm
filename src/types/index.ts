@@ -106,7 +106,7 @@ export interface LiteLLMMcpServer {
  */
 export type LiteLLMMcpServerResponse = LiteLLMMcpServer[] | { data?: LiteLLMMcpServer[] }
 
-export type ModelType = 'chat' | 'embedding' | 'image' | 'audio' | 'unknown'
+export type ModelType = 'chat' | 'embedding' | 'image' | 'audio' | 'video' | 'rerank' | 'unknown'
 
 /**
  * Which OpenAI-compatible HTTP surface a model should be invoked through.

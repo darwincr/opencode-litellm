@@ -1,4 +1,4 @@
-import type { LiteLLMModel } from '../types'
+import type { LiteLLMModel, ModelType } from '../types'
 
 /**
  * Extract owner / provider from a LiteLLM model ID.
@@ -74,13 +74,15 @@ function joinTrailingVersionPair(tokens: string[]): string[] {
  * Categorize the model so we can attach sensible `modalities` metadata
  * in the OpenCode provider config.
  */
-export function categorizeModel(model: LiteLLMModel): 'chat' | 'embedding' | 'image' | 'audio' | 'unknown' {
+export function categorizeModel(model: LiteLLMModel): ModelType {
   if (model.mode) {
     const m = model.mode.toLowerCase()
     if (m.includes('embedding')) return 'embedding'
     if (m.includes('image')) return 'image'
     if (m.includes('audio') || m.includes('speech') || m.includes('transcription')) return 'audio'
-    if (m.includes('chat') || m.includes('completion')) return 'chat'
+    if (m.includes('video')) return 'video'
+    if (m.includes('rerank')) return 'rerank'
+    if (m.includes('chat') || m.includes('completion') || m === 'responses') return 'chat'
   }
 
   const id = model.id.toLowerCase()

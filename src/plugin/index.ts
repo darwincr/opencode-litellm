@@ -186,13 +186,13 @@ function toPerMillion(costPerToken: number): number {
 /**
  * Convert a discovered LiteLLM model into an OpenCode config-level
  * model entry (the shape used in `provider.*.models` inside
- * `opencode.json`). Returns `null` for non-chat models (embedding,
- * image, audio) — they can't be used as primary chat models and would
+ * `opencode.json`). Returns `null` for non-chat models — they can't
+ * be used as primary chat models and would
  * clutter the picker.
  */
 function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
   const type = categorizeModel(model)
-  if (type === 'embedding' || type === 'image' || type === 'audio') {
+  if (type !== 'chat' && type !== 'unknown') {
     return null
   }
   const entry: Record<string, unknown> = {
@@ -204,20 +204,21 @@ function toConfigModel(model: LiteLLMModel): Record<string, unknown> | null {
       output: model.max_output_tokens ?? 0,
     }
   }
-  if (model.supports_function_calling) {
-    entry.tool_call = true
+  if (model.supports_function_calling != null) {
+    entry.tool_call = model.supports_function_calling
   }
-  if (model.supports_reasoning) {
-    entry.reasoning = true
+  if (model.supports_reasoning != null) {
+    entry.reasoning = model.supports_reasoning
   }
-  if (model.supports_vision) {
-    entry.attachment = true
+  if (model.supports_vision != null) {
+    entry.attachment = model.supports_vision
   }
   const input: Array<'text' | 'image' | 'pdf' | 'audio'> = ['text']
   if (model.supports_vision) input.push('image')
   if (model.supports_pdf_input) input.push('pdf')
   if (model.supports_audio_input) input.push('audio')
-  if (input.length > 1) {
+  if (input.length > 1 || model.supports_vision != null ||
+      model.supports_pdf_input != null || model.supports_audio_input != null) {
     entry.modalities = { input, output: ['text'] }
   }
   if (model.input_cost_per_token != null || model.output_cost_per_token != null) {

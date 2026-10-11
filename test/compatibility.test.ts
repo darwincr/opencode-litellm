@@ -90,6 +90,7 @@ describe('dual-version compatibility', () => {
         reload: vi.fn(async () => {}),
       },
       event: { subscribe: () => (async function* () {})() },
+      session: { hook: async () => ({ dispose }) },
     } as unknown as Context
     const cleanup = await plugin.setup(context)
     expect([...models.keys()]).toEqual(['curated', 'team/chat'])
@@ -104,7 +105,7 @@ describe('dual-version compatibility', () => {
       variants: [{ id: 'high', settings: { reasoningEffort: 'high' } }],
     })
     await cleanup?.()
-    expect(dispose).toHaveBeenCalledTimes(2)
+    expect(dispose).toHaveBeenCalledTimes(3)
   })
 
   it('reconciles a provider registered after setup and retries a failed reload', async () => {
@@ -132,6 +133,7 @@ describe('dual-version compatibility', () => {
         yield { type: 'provider.updated' }
         yield { type: 'provider.updated' }
       })() },
+      session: { hook: async () => ({ dispose: async () => {} }) },
     } as unknown as Context
     const cleanup = await plugin.setup(context)
     providers = [{

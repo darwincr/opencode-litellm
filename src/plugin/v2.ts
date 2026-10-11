@@ -65,7 +65,6 @@ interface Source {
   models: Model.Info[]
   settings: Record<string, unknown>
   mcp: Record<string, unknown>
-  owned: Set<string>
 }
 
 const definition = Plugin.define({
@@ -111,7 +110,6 @@ const definition = Plugin.define({
         settings: runtimeSettings,
         models: toProviderModels(provider.id, config.provider[provider.id].models),
         mcp: config.mcp,
-        owned: sources.get(provider.id)?.owned ?? new Set(),
       }
     }
 
@@ -149,17 +147,16 @@ const definition = Plugin.define({
       for (const [id, source] of sources) {
         const current = editor.get(id)
         if (current) {
-          // Curated host models win. Plugin-owned entries can refresh/disappear.
-          const models = new Map([...current.models].filter(([id]) => !source.owned.has(id)))
-          source.owned = new Set()
+          // Transforms replay onto fresh source definitions. Everything already
+          // present belongs to the host or an earlier transform and must win,
+          // even if the same ID was discovered during a previous rebuild.
+          const models = new Map(current.models)
           for (const model of source.models) {
             if (models.has(model.id)) continue
             models.set(model.id, model)
-            source.owned.add(model.id)
           }
           editor.models.set(id, [...models.values()])
         } else {
-          source.owned = new Set(source.models.map((model) => model.id))
           editor.add({
             info: {
               ...Provider.Info.empty(Provider.ID.make(id)),
@@ -200,9 +197,21 @@ const definition = Plugin.define({
       })
       return queue
     }
+    // Model snapshots can precede initial plugin settlement. A session in a
+    // newly loaded location must finish discovery before its first model call.
+    const promptRegistration = await context.session.hook('prompt', async () => {
+      await schedule()
+    })
     void (async () => {
       try {
         for await (const event of context.event.subscribe({ signal: controller.signal })) {
+          // The public stream includes every loaded location. Credentials are
+          // shared server-wide; provider and session changes are location-bound.
+          if (event.type === 'provider.updated' || event.type === 'session.created') {
+            const directory = event.location?.directory ??
+              (event.type === 'session.created' ? event.data?.location?.directory : undefined)
+            if (directory && context.location?.directory && directory !== context.location.directory) continue
+          }
           if (event.type === 'provider.updated') void schedule()
           if (event.type === 'session.created' || event.type === 'credential.switched') void schedule(true)
         }
@@ -215,6 +224,7 @@ const definition = Plugin.define({
       stopped = true
       controller.abort()
       await queue
+      await promptRegistration.dispose()
       await mcpRegistration.dispose()
       await registration.dispose()
     }

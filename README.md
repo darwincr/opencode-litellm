@@ -658,8 +658,22 @@ Both adapters use this fork's discovery pipeline, including `modelFilter`,
 `excludeModels`, models.dev metadata and variants, `modelDefaults`, exact LiteLLM
 model aliases, and opt-in MCP discovery. The v2 adapter translates models into
 the native provider registry and MCP `enabled` into v2 `disabled`. It reconciles
-providers registered after setup and refreshes discovery on new sessions and
-credential switches. Curated models and MCP entries take precedence.
+providers registered after setup and refreshes discovery on new sessions in its
+own location and server-wide credential switches. Events from other workspace
+locations do not repeat discovery. Curated models and MCP entries take precedence.
+Prompt admission waits for pending provider discovery so the first request in a
+new workspace has its model inventory available.
+
+The v2 provider transform preserves curated source definitions on every replay,
+including overrides added after a model was first discovered. Discovery retains
+explicit `false` capability flags from LiteLLM; models.dev fills gaps without
+re-enabling unsupported tools, reasoning, or image input. Video and rerank
+endpoints are hidden from the chat model picker alongside embeddings, image
+generation, and audio endpoints.
+
+The compatibility and reliability tests cover provider registration, reload
+retry, fresh transform replay, model removal, proxy outage/recovery, capability
+precedence, non-chat filtering, and native reasoning settings.
 
 ## Local OpenCode v2 testing
 

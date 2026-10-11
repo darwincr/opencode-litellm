@@ -270,12 +270,13 @@ export function applyModelsDevMetadata(
       output: catalog.limit.output ?? 0,
     }
   }
-  if (catalog.tool_call) entry.tool_call = true
-  if (catalog.reasoning) entry.reasoning = true
+  if (entry.tool_call == null && catalog.tool_call != null) entry.tool_call = catalog.tool_call
+  if (entry.reasoning == null && catalog.reasoning != null) entry.reasoning = catalog.reasoning
+  if (entry.attachment == null && catalog.attachment != null) entry.attachment = catalog.attachment
   if (entry.attachment == null && catalog.modalities?.input?.includes('image')) {
     entry.attachment = true
   }
-  if (!entry.modalities && catalog.modalities?.input && catalog.modalities.input.length > 1) {
+  if (!entry.modalities && catalog.modalities?.input?.length) {
     entry.modalities = {
       input: catalog.modalities.input,
       output: catalog.modalities.output ?? ['text'],
@@ -283,7 +284,7 @@ export function applyModelsDevMetadata(
   }
 
   const reasoningOptions = catalog.reasoning_options ?? []
-  if (entry.variants || reasoningOptions.length === 0) return
+  if (entry.reasoning === false || entry.variants || reasoningOptions.length === 0) return
 
   const effort = reasoningOptions.find(
     (o) => o.type === 'effort' && Array.isArray(o.values) && o.values.length > 0,
